@@ -1,17 +1,32 @@
 import torch as T
 import numpy as np
 
+softplus = lambda x: T.log(1. + T.exp(x))
+softmax  = lambda x: T.exp(x) / T.exp(x).sum(dim=0)
+
 
 class NNLayer(object):
+	"""
+	Base class for Neural network layer
+	"""
 
-	def __init__(self, n_in, n_out, dropout=None):
-		self.n_in, self.n_out, self.dropout, self.dtype = n_in, n_out, dropout, T.float64
+	def __init__(self, n_in, n_out, w_init, dropout=None):
+		self.n_in, self.n_out, self.dropout, self.w_init, self.dtype = n_in, n_out, dropout, w_init, T.float64
 		# subclass needs to implement weight init
 		
 	
-	def _w_init(self, n_out, n_in):
-		return (T.randn(n_out, n_in, dtype=self.dtype) * 1./np.sqrt(n_in)).requires_grad_(), \
-				T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)
+	def _w_init(self, n_out, n_in, type='xavier', scale=None):
+		if type == 'gaussian':  
+			# N(0, scale)
+			return (T.randn(n_out, n_in, dtype=self.dtype) * scale).requires_grad_(), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)
+		elif type == 'uniform': 
+			# Unif(-scale, scale)
+			return ((2*T.rand(n_out, n_in, dtype=self.dtype) - 1.) * scale).requires_grad_(), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)	
+		else:
+			return (T.randn(n_out, n_in, dtype=self.dtype) * 1./np.sqrt(n_in)).requires_grad_(), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)
 
 		
 	def forward(self):
@@ -63,16 +78,15 @@ class NNLayer(object):
 
 class LSTMLayer(NNLayer):
 	
-	def __init__(self, n_in, n_out, dropout=None):
-		super().__init__(n_in, n_out, dropout)
-		n_in, n_out, dropout = self.n_in, self.n_out, self.dropout
+	def __init__(self, n_in, n_out, w_init, dropout=None):
+		super().__init__(n_in, n_out, w_init, dropout)
 		self.non_linear = None
 		# initialize the forget bias to large value to remember more
 		self.bf = T.ones(n_out, 1, requires_grad=True, dtype=self.dtype)  
-		self.Wf, _       = self._w_init(n_out, n_in + n_out) 
-		self.Wi, self.bi = self._w_init(n_out, n_in + n_out)
-		self.Wg, self.bg = self._w_init(n_out, n_in + n_out)
-		self.Wo, self.bo = self._w_init(n_out, n_in + n_out)
+		self.Wf, _       = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1]) 
+		self.Wi, self.bi = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
+		self.Wg, self.bg = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
+		self.Wo, self.bo = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
 
 	
 	def forward(self, x, hprev=None, cprev=None):
@@ -122,11 +136,10 @@ class LSTMLayer(NNLayer):
 
 class DenseLayer(NNLayer):
 	
-	def __init__(self, n_in, n_out, non_linear, dropout=None):
-		super().__init__(n_in, n_out, dropout)
-		n_in, n_out, dropout = self.n_in, self.n_out, self.dropout
+	def __init__(self, n_in, n_out, non_linear, w_init, dropout=None):
+		super().__init__(n_in, n_out, w_init, dropout)
 		self.non_linear = non_linear
-		self.W, self.b = self._w_init(n_out, n_in)
+		self.W, self.b = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
 		
 		
 	def forward(self, X):
@@ -149,11 +162,10 @@ class GaussianLayer(NNLayer):
 	"""
 	Layer to model mean and logvar of Gaussian 
 	"""
-	def __init__(self, n_in, n_out, dropout=None):
-		super().__init__(n_in, n_out, dropout)
-		n_in, n_out, dropout = self.n_in, self.n_out, self.dropout
-		self.Wm, self.bm = self._w_init(n_out, n_in)
-		self.Ws, self.bs = self._w_init(n_out, n_in)
+	def __init__(self, n_in, n_out, w_init, dropout=None):
+		super().__init__(n_in, n_out, w_init, dropout)
+		self.Wm, self.bm = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
+		self.Ws, self.bs = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
 		
 	
 	def forward(self, X):
