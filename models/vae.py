@@ -7,6 +7,9 @@ epsilon = 1e-10
 gaussian_regularization = lambda mu, var: 0.5*(1. + T.log(var + epsilon) - mu.pow(2.) - var).sum()
 bernoulli_likelihood = lambda x, x_hat: (x * T.log(x_hat + epsilon) + (1. - x) * T.log(1. - x_hat)).sum()
 entropy = lambda px: -(px * T.log(px + epsilon)).sum()
+gaussian_likelihood = lambda x, mu, var: -0.5*( (x - mu).pow(2.)/(var + epsilon) + T.log(var + epsilon) ).sum()
+gaussian_entropy = lambda var: T.log(var + epsilon).sum()
+categorial_regularization = lambda pi, n_class: -(pi*T.log(pi * n_class + epsilon)).sum() 
 
 
 def gumbel_softmax(pi, temp):
@@ -31,14 +34,15 @@ class VAE(object):
 
 	def __init__(self, params):
 		self.__dict__.update(params)
-		n_in, n_hidden, n_embedding, n_out = self.n_in, self.n_hidden, self.n_embedding, self.n_out
+		n_in, n_hidden, n_embedding, n_out, w_init = self.n_in, self.n_hidden, self.n_embedding, self.n_out, self.w_init
+		hidden_nonlinear = self.hidden_nonlinear   # default T.tanh
 		# Encoder
-		self.encoder_x = DenseLayer(n_in, n_hidden, T.tanh)
-		self.encoder_z = GaussianLayer(n_hidden, n_embedding)
+		self.encoder_x = DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init)
+		self.encoder_z = GaussianLayer(n_hidden, n_embedding, w_init)
 		
 		# Decoder
-		self.decoder_z = DenseLayer(n_embedding, n_hidden, T.tanh)
-		self.decoder_x = DenseLayer(n_hidden, n_out, T.sigmoid)
+		self.decoder_z = DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init)
+		self.decoder_x = DenseLayer(n_hidden, n_out, T.sigmoid, w_init)
 		
 		self.optimizer(self.learning_rate, self.clamping, [self.encoder_x, self.encoder_x, 
 														   self.decoder_z, self.decoder_x])
@@ -50,32 +54,34 @@ class VAE(object):
 		epsilon = 1e-10
 		n_batch = X.size()[1]
 		# sample from z
-		e = T.randn_like(mu_z)
-		z = mu_z + T.sqrt(var_z) * e
+		z = mu_z + T.sqrt(var_z) * T.randn_like(mu_z)
 		
 		h_de  = self.decoder_z.forward(z)
-		x_hat = self.decoder_x.forward(h_de)
+		x_hat = self.decoder_x.forward(h_de)	
+		# x_samples   = mu_x + T.sqrt(var_x) * T.rand_like(mu_x)  # for sampling purpose only
 		loss  = (gaussian_regularization(mu_z, var_z) + bernoulli_likelihood(X, x_hat)) / n_batch
+		#loss  = (gaussian_regularization(mu_z, var_z) + gaussian_likelihood(X, mu_x, var_x)) / n_batch
 
 		if train:
 			loss.backward()
 			self.optimizer.optimize()
-		return loss
+		return loss, {'z_samples': z.detach().numpy(), 'x_hat': x_hat.detach().numpy() }
+					  #'mu_x': mu_x.detach().numpy(), 'var_x': var_x.detach().numpy()}
 	
 	
 	def train(self, n_iterations, fetcher, hook):
 		t0 = time()
 		for j in range(n_iterations+1):
 			X = fetcher()
-			loss = self.forward(X)
+			loss, results = self.forward(X)
 			# logistic
-			hook(self, loss.item(), j, X.detach().numpy(), time()-t0)
+			hook(self, loss.item(), j, time()-t0, results)
 
 
 
 class SSL_VAE(object):
 	"""
-	
+	Semi-supervised VAE as described in [2014 DP.Kingma et al]
 	"""
 	
 	def __init__(self, params):
@@ -135,4 +141,63 @@ class SSL_VAE(object):
 			# logistic
 			hook(self, loss.item(), j, time()-t0)
 
+
+
+class AuxVAE(object):
+    
+    def __init__(self, params):
+        self.__dict__.update(params)
+        n_in, n_hidden, n_embedding, n_out = self.n_in, self.n_hidden, self.n_embedding, self.n_out
+        n_aux, w_init = self.n_aux, self.w_init
+        
+        # Encoder / Inference
+        self.qa_x  = [DenseLayer(n_in, n_hidden, T.relu, w_init), GaussianLayer(n_hidden, n_aux, w_init)]
+        self.qz_ax = [DenseLayer(n_in+n_aux, n_hidden, T.relu, w_init), 
+                      GaussianLayer(n_hidden, n_embedding, w_init)]
+        
+        # Decoder / Generative
+        self.px_z  = [DenseLayer(n_embedding, n_hidden, T.relu, w_init), 
+                      GaussianLayer(n_hidden, n_out, w_init)]
+        self.pa_xz = [DenseLayer(n_in+n_embedding, n_hidden, T.relu, w_init), 
+                      GaussianLayer(n_hidden, n_aux, w_init)]
+        
+        self.optimizer(self.learning_rate, self.clamping, self.qa_x + self.qz_ax + self.px_z + self.pa_xz)
+        
+    
+    def forward(self, x, train=True):
+        qa_x, qz_ax, px_z, pa_xz = self.qa_x, self.qz_ax, self.px_z, self.pa_xz
+        
+        n_batch = x.size()[1]
+        # Inference model
+        mu_qa, var_qa = qa_x[1].forward(qa_x[0].forward(x))
+        qa_samples    = mu_qa + T.sqrt(var_qa) * T.rand_like(mu_qa) 
+        
+        ax = T.cat((x, qa_samples), dim=0)
+        mu_qz, var_qz = qz_ax[1].forward(qz_ax[0].forward(ax))
+        qz_samples    = mu_qz + T.sqrt(var_qz) * T.rand_like(mu_qz)
+        
+        # Generative model
+        mu_px, var_px = px_z[1].forward(px_z[0].forward(qz_samples))
+        px_samples    = mu_px + T.sqrt(var_px) * T.rand_like(mu_px)   # only to generate samples
+        
+        xz = T.cat((x, qz_samples), dim=0)
+        mu_pa, var_pa = pa_xz[1].forward(pa_xz[0].forward(xz))
+        pa_samples = mu_pa + T.sqrt(var_pa) * T.rand_like(mu_pa)
+        
+        loss = (gaussian_regularization(mu_qz, var_qz) + gaussian_likelihood(x, mu_px, var_px) + \
+                gaussian_likelihood(qa_samples, mu_pa, var_pa) + gaussian_entropy(var_qa)) / n_batch
+        
+        if train:
+            loss.backward()
+            self.optimizer.optimize()
+        return loss, px_samples
+    
+    
+    def train(self, n_iterations, fetcher, hook):
+        t0 = time()
+        for j in range(n_iterations+1):
+            x = fetcher()
+            loss, px_samples = self.forward(x)
+            # logistic
+            hook(self, loss.item(), j, time() - t0, px_samples.detach().numpy())
 

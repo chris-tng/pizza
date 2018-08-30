@@ -72,9 +72,8 @@ class NNLayer(object):
 	
 	def __str__(self):
 		return self.__repr__()
-	
-		
 
+		
 
 class LSTMLayer(NNLayer):
 	
