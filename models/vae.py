@@ -12,6 +12,27 @@ gaussian_entropy = lambda var: T.log(var + epsilon).sum()
 categorial_regularization = lambda pi, n_class: -(pi*T.log(pi * n_class + epsilon)).sum() 
 
 
+def rbf_kernel(x, y):
+    """
+    x: dim, n_x
+    y: dim, n_y
+    
+    Returns:
+    - K: n_x, n_y where K[i,j] is the RBF of x[:,i] and y[:,j] 
+    """
+    dim, n_x, n_y = x.size()[0], x.size()[1], y.size()[1]
+    x_tiled = x.transpose(0, 1).reshape(n_x, 1, dim).expand(n_x, n_y, dim)
+    y_tiled = y.transpose(0, 1).reshape(1, n_y, dim).expand(n_x, n_y, dim)
+    return T.exp(-(x_tiled - y_tiled).pow(2.).mean(dim=2) / T.tensor(dim, dtype=T.float64))
+
+
+def mmd(x, y):
+    Kxx = rbf_kernel(x, x)
+    Kyy = rbf_kernel(y, y)
+    Kxy = rbf_kernel(x, y)
+    return Kxx.mean() + Kyy.mean() - 2 * Kxy.mean()
+
+
 def gumbel_softmax(pi, temp):
 	"""
 	Sample from Categorial distribution with parameter `pi` using 
@@ -201,3 +222,57 @@ class AuxVAE(object):
             # logistic
             hook(self, loss.item(), j, time() - t0, px_samples.detach().numpy())
 
+
+class MMDVAE(object):
+    """
+    Mutual Information maximizing VAE
+    """
+    
+    def __init__(self, params):
+        self.__dict__.update(params)
+        n_in, n_hidden, n_embedding, n_out = self.n_in, self.n_hidden, self.n_embedding, self.n_out
+        hidden_nonlinear, w_init = self.hidden_nonlinear, self.w_init
+        
+        
+        # Encoder / Inference
+        self.qz_x = [DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init), 
+                     GaussianLayer(n_hidden, n_embedding, w_init)]
+        
+        # Decoder / Generative
+        self.px_z = [DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init), 
+                     DenseLayer(n_hidden, n_in, T.sigmoid, w_init)]
+        
+        self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)
+    
+    
+    def forward(self, x, train=True):
+        qz_x, px_z, alpha, scaling = self.qz_x, self.px_z, self.alpha, self.scaling
+        
+        n_batch = x.size()[1]
+        # Inference model
+        mu_z, var_z = qz_x[1].forward(qz_x[0].forward(x))
+        z_prior     = T.rand_like(mu_z)
+        z_samples   = mu_z + var_z * z_prior
+        
+        # Generative model
+        x_hat = px_z[1].forward(px_z[0].forward(z_samples))
+        reconstruction_loss          = bernoulli_likelihood(x, x_hat) / n_batch
+        regularization_posterior     = (1.-alpha)*gaussian_regularization(mu_z, var_z) / n_batch
+        regularization_ave_posterior = (alpha + scaling - 1) * -mmd(z_samples, z_prior)
+        loss = reconstruction_loss + regularization_posterior + regularization_ave_posterior
+        
+        if train:
+            loss.backward()
+            self.optimizer.optimize()
+        return loss, {'recon': reconstruction_loss.detach().numpy(), 
+                      'reg_post': regularization_posterior.detach().numpy(), 
+                      'reg_ave_post': regularization_ave_posterior.detach().numpy()}
+    
+    
+    def train(self, n_iterations, fetcher, hook):
+        t0 = time()
+        for j in range(n_iterations+1):
+            x = fetcher()
+            loss, results = self.forward(x)
+            # logistic
+            hook(self, loss.item(), j, time()-t0, results                                                                                                               )
