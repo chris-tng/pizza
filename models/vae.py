@@ -65,7 +65,7 @@ class VAE(object):
 		self.px_z = [DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init=w_init, device=device),
 					 DenseLayer(n_hidden, n_out, T.sigmoid, w_init=w_init, device=device)]
 		
-		self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)									   self.decoder_z, self.decoder_x])
+		self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)
 		
 		
 	def forward(self, x, training=True):
