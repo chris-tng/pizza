@@ -207,8 +207,13 @@ class AuxVAE(object):
         mu_pa, var_pa = pa_xz[1].forward(pa_xz[0].forward(xz))
         pa_samples = mu_pa + T.sqrt(var_pa) * T.rand_like(mu_pa)
         
-        loss = (gaussian_regularization(mu_qz, var_qz) + gaussian_likelihood(x, mu_px, var_px) + \
-                gaussian_likelihood(qa_samples, mu_pa, var_pa) + gaussian_entropy(var_qa)) / n_batch
+        reg_qz = gaussian_regularization(mu_qz, var_qz) / n_batch
+        reconstruction = gaussian_likelihood(x, mu_px, var_px) / n_batch
+        likelihood_a = gaussian_likelihood(qa_samples, mu_pa, var_pa) / n_batch
+        entropy_qa   = gaussian_entropy(var_qa) / n_batch
+
+        loss = reg_qz + reconstruction + likelihood_a + entropy_qa
+        self.__dict__.update(locals())
         
         if train:
             loss.backward()
