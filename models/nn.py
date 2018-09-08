@@ -10,24 +10,25 @@ class NNLayer(object):
 	Base class for Neural network layer
 	"""
 
-	def __init__(self, n_in, n_out, w_init, dropout=None):
-		self.n_in, self.n_out, self.dropout, self.w_init, self.dtype = n_in, n_out, dropout, w_init, T.float64
+	def __init__(self, n_in, n_out, w_init, dropout=None, device=T.device('cpu')):
+		self.n_in, self.n_out, self.dropout, self.w_init, self.dtype, self.device = n_in, n_out, dropout, w_init, T.float64, device
 		# subclass needs to implement weight init
 		
 	
 	def _w_init(self, n_out, n_in, type='xavier', scale=None):
+		dtype, device = self.dtype, self.device
 		if type == 'gaussian':  
 			# N(0, scale)
-			return (T.randn(n_out, n_in, dtype=self.dtype) * scale).requires_grad_(), \
-					T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)
+			return (T.randn(n_out, n_in, dtype=dtype) * scale).requires_grad_().to(device), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=dtype).to(device)
 		elif type == 'uniform': 
 			# Unif(-scale, scale)
-			return ((2*T.rand(n_out, n_in, dtype=self.dtype) - 1.) * scale).requires_grad_(), \
-					T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)	
+			return ((2*T.rand(n_out, n_in, dtype=dtype) - 1.) * scale).requires_grad_().to(device), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=dtype).to(device)	
 		else:
-			return (T.randn(n_out, n_in, dtype=self.dtype) * 1./np.sqrt(n_in)).requires_grad_(), \
-					T.zeros(n_out, 1, requires_grad=True, dtype=self.dtype)
-
+			return (T.randn(n_out, n_in, dtype=dtype) * 1./np.sqrt(n_in)).requires_grad_().to(device), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=dtype)
+				
 		
 	def forward(self):
 		pass
@@ -77,11 +78,11 @@ class NNLayer(object):
 
 class LSTMLayer(NNLayer):
 	
-	def __init__(self, n_in, n_out, w_init, dropout=None):
-		super().__init__(n_in, n_out, w_init, dropout)
+	def __init__(self, n_in, n_out, w_init, dropout=None, device=T.device('cpu')):
+		super().__init__(n_in, n_out, w_init, dropout, device)
 		self.non_linear = None
 		# initialize the forget bias to large value to remember more
-		self.bf = T.ones(n_out, 1, requires_grad=True, dtype=self.dtype)  
+		self.bf = T.ones(n_out, 1, requires_grad=True, dtype=self.dtype).to(device)
 		self.Wf, _       = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1]) 
 		self.Wi, self.bi = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
 		self.Wg, self.bg = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
@@ -104,12 +105,12 @@ class LSTMLayer(NNLayer):
 		Returns:
 		- hs: list of torch.Tensor as outputs from the layer to be used in subsequent layer
 		"""
-		n_in, n_out, dtype, dropout = self.n_in, self.n_out, self.dtype, self.dropout
+		n_in, n_out, dtype, dropout, device = self.n_in, self.n_out, self.dtype, self.dropout, self.device
 		Wi, Wf, Wo, Wg = self.Wi, self.Wf, self.Wo, self.Wg   
 		bi, bf, bo, bg = self.bi, self.bf, self.bo, self.bg   
 		
-		hprev   = T.zeros(n_out, 1, dtype=dtype) if hprev == None else hprev
-		cprev   = T.zeros(n_out, 1, dtype=dtype) if cprev == None else cprev
+		hprev   = T.zeros(n_out, 1, dtype=dtype).to(device) if hprev == None else hprev
+		cprev   = T.zeros(n_out, 1, dtype=dtype).to(device) if cprev == None else cprev
 		_hs     = []
 		n_batch = x.size()[1]
 		for j in range(n_batch):
@@ -123,7 +124,7 @@ class LSTMLayer(NNLayer):
 			_h = o * T.tanh(c)
 			# batch norm - maybe?
 			h = _h * T.tensor(np.random.binomial(1, 1.-dropout, 
-												 tuple(_h.size()))/(1.-dropout), dtype=dtype) if dropout else _h
+												 tuple(_h.size()))/(1.-dropout), dtype=dtype).to(device) if dropout else _h
 			hprev  = h
 			cprev  = c
 			_hs.append(h)
@@ -135,8 +136,8 @@ class LSTMLayer(NNLayer):
 
 class DenseLayer(NNLayer):
 	
-	def __init__(self, n_in, n_out, non_linear, w_init, dropout=None):
-		super().__init__(n_in, n_out, w_init, dropout)
+	def __init__(self, n_in, n_out, non_linear, w_init, dropout=None, device=T.device('cpu')):
+		super().__init__(n_in, n_out, w_init, dropout, device)
 		self.non_linear = non_linear
 		self.W, self.b = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
 		
@@ -145,13 +146,13 @@ class DenseLayer(NNLayer):
 		"""
 		X: torch.Tensor of dim (n_x, n_batch)
 		"""
-		dtype, dropout = self.dtype, self.dropout
+		dtype, dropout, device = self.dtype, self.dropout, self.device
 		
 		h = self.W.mm(X) + self.b
 		_out = self.non_linear(h)
 		# perform dropout - may switch this before non-linear for ReLU unit
 		out = _out * T.tensor(np.random.binomial(1, 1.-dropout, 
-												 tuple(_out.size()))/(1.-dropout), dtype=dtype) if dropout else _out
+												 tuple(_out.size()))/(1.-dropout), dtype=dtype).to(device) if dropout else _out
 		return out
 	   
 
@@ -161,8 +162,8 @@ class GaussianLayer(NNLayer):
 	"""
 	Layer to model mean and logvar of Gaussian 
 	"""
-	def __init__(self, n_in, n_out, w_init, dropout=None):
-		super().__init__(n_in, n_out, w_init, dropout)
+	def __init__(self, n_in, n_out, w_init, dropout=None, device=T.device('cpu')):
+		super().__init__(n_in, n_out, w_init, dropout, device)
 		self.Wm, self.bm = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
 		self.Ws, self.bs = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
 		
@@ -173,7 +174,7 @@ class GaussianLayer(NNLayer):
 		"""
 		mu   = self.Wm.mm(X) + self.bm
 		var  = T.exp(self.Ws.mm(X) + self.bs)
-		mask = T.tensor(np.random.binomial(1, 1.-dropout, tuple(mu.size()))/(1.-dropout), dtype=dtype) if self.dropout else 1.
+		mask = T.tensor(np.random.binomial(1, 1.-dropout, tuple(mu.size()))/(1.-dropout), dtype=dtype).to(self.device) if self.dropout else 1.
 		# use the same dropout mask for both
 		_mu  = mu * mask 
 		_var = var * mask

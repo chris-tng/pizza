@@ -55,15 +55,15 @@ class VAE(object):
 
 	def __init__(self, params):
 		self.__dict__.update(params)
-		n_in, n_hidden, n_embedding, n_out, w_init = self.n_in, self.n_hidden, self.n_embedding, self.n_out, self.w_init
+		n_in, n_hidden, n_embedding, n_out, w_init, device = self.n_in, self.n_hidden, self.n_embedding, self.n_out, self.w_init, self.device
 		hidden_nonlinear = self.hidden_nonlinear   # default T.tanh
 		# Encoder
-		self.encoder_x = DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init)
-		self.encoder_z = GaussianLayer(n_hidden, n_embedding, w_init)
+		self.encoder_x = DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init, device)
+		self.encoder_z = GaussianLayer(n_hidden, n_embedding, w_init, device)
 		
 		# Decoder
-		self.decoder_z = DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init)
-		self.decoder_x = DenseLayer(n_hidden, n_out, T.sigmoid, w_init)
+		self.decoder_z = DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init, device)
+		self.decoder_x = DenseLayer(n_hidden, n_out, T.sigmoid, w_init, device)
 		
 		self.optimizer(self.learning_rate, self.clamping, [self.encoder_x, self.encoder_x, 
 														   self.decoder_z, self.decoder_x])
@@ -108,16 +108,16 @@ class SSL_VAE(object):
 	def __init__(self, params):
 		self.__dict__.update(params)
 		n_in, n_hidden, n_embedding, n_out = self.n_in, self.n_hidden, self.n_embedding, self.n_out 
-		w_init, n_class = self.w_init, self.n_class
+		w_init, n_class, device = self.w_init, self.n_class, self.device
 		
 		# Encoder / Inference
-		self.qy_x  = [DenseLayer(n_in, n_hidden, softplus, w_init), DenseLayer(n_hidden, n_class, softmax, w_init)]
-		self.qz_yx = [DenseLayer(n_in+n_class, n_hidden, softplus, w_init), 
-					  GaussianLayer(n_hidden, n_embedding, w_init)]
+		self.qy_x  = [DenseLayer(n_in, n_hidden, softplus, w_init, device), DenseLayer(n_hidden, n_class, softmax, w_init, device)]
+		self.qz_yx = [DenseLayer(n_in+n_class, n_hidden, softplus, w_init, device), 
+					  GaussianLayer(n_hidden, n_embedding, w_init, device)]
 		
 		# Decoder / Generative
-		self.px_yz = [DenseLayer(n_class+n_embedding, n_hidden, softplus, w_init), 
-					  DenseLayer(n_hidden, n_out, T.sigmoid, w_init)]
+		self.px_yz = [DenseLayer(n_class+n_embedding, n_hidden, softplus, w_init, device), 
+					  DenseLayer(n_hidden, n_out, T.sigmoid, w_init, device)]
 		
 		self.optimizer(self.learning_rate, self.clamping, self.qy_x + self.qz_yx + self.px_yz)
 		
@@ -169,18 +169,18 @@ class AuxVAE(object):
     def __init__(self, params):
         self.__dict__.update(params)
         n_in, n_hidden, n_embedding, n_out = self.n_in, self.n_hidden, self.n_embedding, self.n_out
-        n_aux, w_init = self.n_aux, self.w_init
+        n_aux, w_init, device = self.n_aux, self.w_init, self.device
         
         # Encoder / Inference
-        self.qa_x  = [DenseLayer(n_in, n_hidden, T.relu, w_init), GaussianLayer(n_hidden, n_aux, w_init)]
-        self.qz_ax = [DenseLayer(n_in+n_aux, n_hidden, T.relu, w_init), 
-                      GaussianLayer(n_hidden, n_embedding, w_init)]
+        self.qa_x  = [DenseLayer(n_in, n_hidden, T.relu, w_init, device), GaussianLayer(n_hidden, n_aux, w_init, device)]
+        self.qz_ax = [DenseLayer(n_in+n_aux, n_hidden, T.relu, w_init, device), 
+                      GaussianLayer(n_hidden, n_embedding, w_init, device)]
         
         # Decoder / Generative
-        self.px_z  = [DenseLayer(n_embedding, n_hidden, T.relu, w_init), 
-                      GaussianLayer(n_hidden, n_out, w_init)]
-        self.pa_xz = [DenseLayer(n_in+n_embedding, n_hidden, T.relu, w_init), 
-                      GaussianLayer(n_hidden, n_aux, w_init)]
+        self.px_z  = [DenseLayer(n_embedding, n_hidden, T.relu, w_init, device), 
+                      GaussianLayer(n_hidden, n_out, w_init, device)]
+        self.pa_xz = [DenseLayer(n_in+n_embedding, n_hidden, T.relu, w_init, device), 
+                      GaussianLayer(n_hidden, n_aux, w_init, device)]
         
         self.optimizer(self.learning_rate, self.clamping, self.qa_x + self.qz_ax + self.px_z + self.pa_xz)
         
@@ -231,16 +231,16 @@ class MMDVAE(object):
     def __init__(self, params):
         self.__dict__.update(params)
         n_in, n_hidden, n_embedding, n_out = self.n_in, self.n_hidden, self.n_embedding, self.n_out
-        hidden_nonlinear, w_init = self.hidden_nonlinear, self.w_init
+        hidden_nonlinear, w_init, device = self.hidden_nonlinear, self.w_init, self.device
         
         
         # Encoder / Inference
-        self.qz_x = [DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init), 
-                     GaussianLayer(n_hidden, n_embedding, w_init)]
+        self.qz_x = [DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init, device), 
+                     GaussianLayer(n_hidden, n_embedding, w_init, device)]
         
         # Decoder / Generative
-        self.px_z = [DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init), 
-                     DenseLayer(n_hidden, n_in, T.sigmoid, w_init)]
+        self.px_z = [DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init, device), 
+                     DenseLayer(n_hidden, n_in, T.sigmoid, w_init, device)]
         
         self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)
     
