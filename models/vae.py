@@ -4,11 +4,11 @@ import numpy as np
 from time import time
 
 epsilon = 1e-10
-gaussian_regularization = lambda mu, var: 0.5*(1. + T.log(var + epsilon) - mu.pow(2.) - var).sum()
+# KL(q(x) || p(x)) where both q and p are Gaussian
+gaussian_KLqp = lambda mu_qx, var_qx, mu_px, var_px: -0.5*(1. - ((mu_px - mu_qx).pow(2.) + var_qx)/(var_px + epsilon) - T.log(var_px + epsilon) + T.log(var_qx + epsilon)).sum()
 bernoulli_likelihood = lambda x, x_hat: (x * T.log(x_hat + epsilon) + (1. - x) * T.log(1. - x_hat)).sum()
 entropy = lambda px: -(px * T.log(px + epsilon)).sum()
 gaussian_likelihood = lambda x, mu, var: -0.5*( (x - mu).pow(2.)/(var + epsilon) + T.log(var + epsilon) ).sum()
-gaussian_entropy = lambda var: T.log(var + epsilon).sum()
 categorial_regularization = lambda pi, n_class: -(pi*T.log(pi * n_class + epsilon)).sum() 
 
 
@@ -78,8 +78,8 @@ class VAE(object):
 		x_hat  = px_z[1].forward(px_z[0].forward(qz_samples))
 		# x_samples   = mu_x + T.sqrt(var_x) * T.rand_like(mu_x)  # for sampling in case of gaussian output
 		reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
-		reg_z = gaussian_regularization(mu_qz, var_qz) / n_batch
-		loss  = reconstruction + reg_z
+		reg_qz         = -gaussian_KLqp(mu_qz, var_qz, 0., 1.) / n_batch
+		loss  = reconstruction + reg_qz
 		self.__dict__.update(locals()) 
 
 		if training:
@@ -145,8 +145,9 @@ class SSL_VAE(object):
 		# Generative model
 		zy    = T.cat((y, z), dim=0)  
 		x_hat = px_yz[1].forward(px_yz[0].forward(zy))
-		loss  = (gaussian_regularization(mu_z, var_z) + bernoulli_likelihood(x, x_hat) \
+		loss  = (-gaussian_KLqp(mu_z, var_z, 0., 1.) + bernoulli_likelihood(x, x_hat) \
 				 + entropy(yu_pred)) / (n_unlabeled + n_labeled) + classification_loss / n_labeled
+		
 		if training:
 			loss.backward()
 			self.optimizer.optimize()
@@ -202,14 +203,12 @@ class AuxVAE(object):
         
         xz = T.cat((x, qz_samples), dim=0)
         mu_pa, var_pa = pa_xz[1].forward(pa_xz[0].forward(xz))
-        pa_samples = mu_pa + T.sqrt(var_pa) * T.rand_like(mu_pa)
         
-        reg_qz = gaussian_regularization(mu_qz, var_qz) / n_batch
         reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
-        likelihood_a = gaussian_likelihood(qa_samples, mu_pa, var_pa) / n_batch
-        entropy_qa   = gaussian_entropy(var_qa) / n_batch
-
-        loss = reg_qz + reconstruction + likelihood_a + entropy_qa
+        reg_qz = -gaussian_KLqp(mu_qz, var_qz, 0., 1.) / n_batch
+        reg_qa = -gaussian_KLqp(mu_qa, var_qa, mu_pa, var_pa) / n_batch
+        loss   = reconstruction + reg_qz + reg_qa
+        
         self.__dict__.update(locals())
         
         if training:
@@ -262,7 +261,7 @@ class MMDVAE(object):
         # Generative model
         x_hat = px_z[1].forward(px_z[0].forward(qz_samples))
         reconstruction_loss          = bernoulli_likelihood(x, x_hat) / n_batch
-        regularization_posterior     = (1.-alpha)*gaussian_regularization(mu_qz, var_qz) / n_batch
+        regularization_posterior     = (1.-alpha)*-gaussian_KLqp(mu_qz, var_qz, 0., 1.) / n_batch
         regularization_ave_posterior = (alpha + scaling - 1) * -mmd(qz_samples, z_prior)
         loss = reconstruction_loss + regularization_posterior + regularization_ave_posterior
         self.__dict__.update(locals())
