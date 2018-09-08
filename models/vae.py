@@ -66,11 +66,11 @@ class VAE(object):
 					 DenseLayer(n_hidden, n_out, T.sigmoid, w_init=w_init, device=device)]
 		
 		self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)
-		
+
 		
 	def forward(self, x, training=True):
 		qz_x, px_z = self.qz_x, self.px_z
-		n_batch = X.size()[1]
+		n_batch = x.size()[1]
 		
 		mu_qz, var_qz = qz_x[1].forward(qz_x[0].forward(x))
 		qz_samples = mu_qz + T.sqrt(var_qz) * T.randn_like(mu_qz)  # sample from z
