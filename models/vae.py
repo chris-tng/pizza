@@ -78,7 +78,7 @@ class VAE(object):
 		x_hat  = px_z[1].forward(px_z[0].forward(qz_samples))
 		# x_samples   = mu_x + T.sqrt(var_x) * T.rand_like(mu_x)  # for sampling in case of gaussian output
 		reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
-		reg_qz         = -gaussian_KLqp(mu_qz, var_qz, 0., 1.) / n_batch
+		reg_qz         = -gaussian_KLqp(mu_qz, var_qz, T.zeros_like(mu_qz), T.ones_like(var_qz)) / n_batch
 		loss  = reconstruction + reg_qz
 		self.__dict__.update(locals()) 
 
@@ -145,7 +145,7 @@ class SSL_VAE(object):
 		# Generative model
 		zy    = T.cat((y, z), dim=0)  
 		x_hat = px_yz[1].forward(px_yz[0].forward(zy))
-		loss  = (-gaussian_KLqp(mu_z, var_z, 0., 1.) + bernoulli_likelihood(x, x_hat) \
+		loss  = (-gaussian_KLqp(mu_z, var_z, T.zeros_like(mu_z), T.ones_like(var_z)) + bernoulli_likelihood(x, x_hat) \
 				 + entropy(yu_pred)) / (n_unlabeled + n_labeled) + classification_loss / n_labeled
 		
 		if training:
@@ -205,7 +205,7 @@ class AuxVAE(object):
         mu_pa, var_pa = pa_xz[1].forward(pa_xz[0].forward(xz))
         
         reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
-        reg_qz = -gaussian_KLqp(mu_qz, var_qz, 0., 1.) / n_batch
+        reg_qz = -gaussian_KLqp(mu_qz, var_qz, T.zeros_like(mu_qz), T.ones_like(var_qz)) / n_batch
         reg_qa = -gaussian_KLqp(mu_qa, var_qa, mu_pa, var_pa) / n_batch
         loss   = reconstruction + reg_qz + reg_qa
         
@@ -261,7 +261,7 @@ class MMDVAE(object):
         # Generative model
         x_hat = px_z[1].forward(px_z[0].forward(qz_samples))
         reconstruction_loss          = bernoulli_likelihood(x, x_hat) / n_batch
-        regularization_posterior     = (1.-alpha)*-gaussian_KLqp(mu_qz, var_qz, 0., 1.) / n_batch
+        regularization_posterior     = (1.-alpha)*-gaussian_KLqp(mu_qz, var_qz, T.zeros_like(mu_qz), T.ones_like(var_qz)) / n_batch
         regularization_ave_posterior = (alpha + scaling - 1) * -mmd(qz_samples, z_prior)
         loss = reconstruction_loss + regularization_posterior + regularization_ave_posterior
         self.__dict__.update(locals())
