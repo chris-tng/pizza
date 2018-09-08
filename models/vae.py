@@ -65,11 +65,10 @@ class VAE(object):
 		self.px_z = [DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init=w_init, device=device),
 					 DenseLayer(n_hidden, n_out, T.sigmoid, w_init=w_init, device=device)]
 		
-		self.optimizer(self.learning_rate, self.clamping, [self.encoder_x, self.encoder_x, 
-														   self.decoder_z, self.decoder_x])
+		self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)									   self.decoder_z, self.decoder_x])
 		
 		
-	def forward(self, x, train=True):
+	def forward(self, x, training=True):
 		qz_x, px_z = self.qz_x, self.px_z
 		n_batch = X.size()[1]
 		
@@ -81,10 +80,9 @@ class VAE(object):
 		reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
 		reg_z = gaussian_regularization(mu_qz, var_qz) / n_batch
 		loss  = reconstruction + reg_z
-
 		self.__dict__.update(locals()) 
 
-		if train:
+		if training:
 			loss.backward()
 			self.optimizer.optimize()
 		return loss
@@ -123,7 +121,7 @@ class SSL_VAE(object):
 		self.optimizer(self.learning_rate, self.clamping, self.qy_x + self.qz_yx + self.px_yz)
 		
 	
-	def forward(self, xu, xo, yo, train=True):
+	def forward(self, xu, xo, yo, training=True):
 		qy_x, qz_yx, px_yz = self.qy_x, self.qz_yx, self.px_yz
 		
 		# Inference model
@@ -149,7 +147,7 @@ class SSL_VAE(object):
 		x_hat = px_yz[1].forward(px_yz[0].forward(zy))
 		loss  = (gaussian_regularization(mu_z, var_z) + bernoulli_likelihood(x, x_hat) \
 				 + entropy(yu_pred)) / (n_unlabeled + n_labeled) + classification_loss / n_labeled
-		if train:
+		if training:
 			loss.backward()
 			self.optimizer.optimize()
 		return loss
@@ -187,7 +185,7 @@ class AuxVAE(object):
         self.optimizer(self.learning_rate, self.clamping, self.qa_x + self.qz_ax + self.px_z + self.pa_xz)
         
     
-    def forward(self, x, train=True):
+    def forward(self, x, training=True):
         qa_x, qz_ax, px_z, pa_xz = self.qa_x, self.qz_ax, self.px_z, self.pa_xz
         
         n_batch = x.size()[1]
@@ -214,7 +212,7 @@ class AuxVAE(object):
         loss = reg_qz + reconstruction + likelihood_a + entropy_qa
         self.__dict__.update(locals())
         
-        if train:
+        if training:
             loss.backward()
             self.optimizer.optimize()
         return loss
@@ -227,6 +225,7 @@ class AuxVAE(object):
             loss = self.forward(x)
             # logistic
             hook(self, loss.item(), j, time() - t0)
+
 
 
 class MMDVAE(object):
@@ -251,7 +250,7 @@ class MMDVAE(object):
         self.optimizer(self.learning_rate, self.clamping, self.qz_x + self.px_z)
     
     
-    def forward(self, x, train=True):
+    def forward(self, x, training=True):
         qz_x, px_z, alpha, scaling = self.qz_x, self.px_z, self.alpha, self.scaling
         
         n_batch = x.size()[1]
@@ -268,7 +267,7 @@ class MMDVAE(object):
         loss = reconstruction_loss + regularization_posterior + regularization_ave_posterior
         self.__dict__.update(locals())
 
-        if train:
+        if training:
             loss.backward()
             self.optimizer.optimize()
         return loss
