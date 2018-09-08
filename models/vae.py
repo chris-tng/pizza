@@ -58,45 +58,45 @@ class VAE(object):
 		n_in, n_hidden, n_embedding, n_out, w_init, device = self.n_in, self.n_hidden, self.n_embedding, self.n_out, self.w_init, self.device
 		hidden_nonlinear = self.hidden_nonlinear   # default T.tanh
 		# Encoder
-		self.encoder_x = DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init=w_init, device=device)
-		self.encoder_z = GaussianLayer(n_hidden, n_embedding, w_init=w_init, device=device)
+		self.qz_x = [DenseLayer(n_in, n_hidden, hidden_nonlinear, w_init=w_init, device=device), 
+					 GaussianLayer(n_hidden, n_embedding, w_init=w_init, device=device)]
 		
 		# Decoder
-		self.decoder_z = DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init=w_init, device=device)
-		self.decoder_x = DenseLayer(n_hidden, n_out, T.sigmoid, w_init=w_init, device=device)
+		self.px_z = [DenseLayer(n_embedding, n_hidden, hidden_nonlinear, w_init=w_init, device=device),
+					 DenseLayer(n_hidden, n_out, T.sigmoid, w_init=w_init, device=device)]
 		
 		self.optimizer(self.learning_rate, self.clamping, [self.encoder_x, self.encoder_x, 
 														   self.decoder_z, self.decoder_x])
 		
 		
-	def forward(self, X, train=True):
-		h_en = self.encoder_x.forward(X)
-		mu_z, var_z = self.encoder_z.forward(h_en)
-		epsilon = 1e-10
+	def forward(self, x, train=True):
+		qz_x, px_z = self.qz_x, self.px_z
 		n_batch = X.size()[1]
-		# sample from z
-		z = mu_z + T.sqrt(var_z) * T.randn_like(mu_z)
 		
-		h_de  = self.decoder_z.forward(z)
-		x_hat = self.decoder_x.forward(h_de)	
-		# x_samples   = mu_x + T.sqrt(var_x) * T.rand_like(mu_x)  # for sampling purpose only
-		loss  = (gaussian_regularization(mu_z, var_z) + bernoulli_likelihood(X, x_hat)) / n_batch
-		#loss  = (gaussian_regularization(mu_z, var_z) + gaussian_likelihood(X, mu_x, var_x)) / n_batch
+		mu_qz, var_qz = qz_x[1].forward(qz_x[0].forward(x))
+		qz_samples = mu_qz + T.sqrt(var_qz) * T.randn_like(mu_qz)  # sample from z
+		
+		x_hat  = px_z[1].forward(px_z[0].forward(qz_samples))
+		# x_samples   = mu_x + T.sqrt(var_x) * T.rand_like(mu_x)  # for sampling in case of gaussian output
+		reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
+		reg_z = gaussian_regularization(mu_qz, var_qz) / n_batch
+		loss  = reconstruction + reg_z
+
+		self.__dict__.update(locals()) 
 
 		if train:
 			loss.backward()
 			self.optimizer.optimize()
-		return loss, {'z_samples': z.detach().cpu().numpy(), 'x_hat': x_hat.detach().cpu().numpy() }
-					  #'mu_x': mu_x.detach().numpy(), 'var_x': var_x.detach().numpy()}
+		return loss
 	
-	
+
 	def train(self, n_iterations, fetcher, hook):
 		t0 = time()
 		for j in range(n_iterations+1):
 			X = fetcher()
-			loss, results = self.forward(X)
+			loss = self.forward(X)
 			# logistic
-			hook(self, loss.item(), j, time()-t0, results)
+			hook(self, loss.item(), j, time()-t0)
 
 
 
@@ -180,7 +180,7 @@ class AuxVAE(object):
         
         # Decoder / Generative
         self.px_z  = [DenseLayer(n_embedding, n_hidden, T.relu, w_init=w_init, device=device), 
-                      GaussianLayer(n_hidden, n_out, w_init=w_init, device=device)]
+                      DenseLayer(n_hidden, n_out, T.sigmoid, w_init=w_init, device=device)]
         self.pa_xz = [DenseLayer(n_in+n_embedding, n_hidden, T.relu, w_init=w_init, device=device), 
                       GaussianLayer(n_hidden, n_aux, w_init=w_init, device=device)]
         
@@ -200,15 +200,14 @@ class AuxVAE(object):
         qz_samples    = mu_qz + T.sqrt(var_qz) * T.rand_like(mu_qz)
         
         # Generative model
-        mu_px, var_px = px_z[1].forward(px_z[0].forward(qz_samples))
-        px_samples    = mu_px + T.sqrt(var_px) * T.rand_like(mu_px)   # only to generate samples
+        x_hat = px_z[1].forward(px_z[0].forward(qz_samples))
         
         xz = T.cat((x, qz_samples), dim=0)
         mu_pa, var_pa = pa_xz[1].forward(pa_xz[0].forward(xz))
         pa_samples = mu_pa + T.sqrt(var_pa) * T.rand_like(mu_pa)
         
         reg_qz = gaussian_regularization(mu_qz, var_qz) / n_batch
-        reconstruction = gaussian_likelihood(x, mu_px, var_px) / n_batch
+        reconstruction = bernoulli_likelihood(x, x_hat) / n_batch
         likelihood_a = gaussian_likelihood(qa_samples, mu_pa, var_pa) / n_batch
         entropy_qa   = gaussian_entropy(var_qa) / n_batch
 
@@ -218,16 +217,16 @@ class AuxVAE(object):
         if train:
             loss.backward()
             self.optimizer.optimize()
-        return loss, px_samples
+        return loss
     
     
     def train(self, n_iterations, fetcher, hook):
         t0 = time()
         for j in range(n_iterations+1):
             x = fetcher()
-            loss, px_samples = self.forward(x)
+            loss = self.forward(x)
             # logistic
-            hook(self, loss.item(), j, time() - t0, px_samples.detach().cpu().numpy())
+            hook(self, loss.item(), j, time() - t0)
 
 
 class MMDVAE(object):
@@ -257,29 +256,28 @@ class MMDVAE(object):
         
         n_batch = x.size()[1]
         # Inference model
-        mu_z, var_z = qz_x[1].forward(qz_x[0].forward(x))
-        z_prior     = T.rand_like(mu_z)
-        z_samples   = mu_z + var_z * z_prior
+        mu_qz, var_qz = qz_x[1].forward(qz_x[0].forward(x))
+        z_prior       = T.rand_like(mu_qz)
+        qz_samples    = mu_qz + var_qz * z_prior
         
         # Generative model
-        x_hat = px_z[1].forward(px_z[0].forward(z_samples))
+        x_hat = px_z[1].forward(px_z[0].forward(qz_samples))
         reconstruction_loss          = bernoulli_likelihood(x, x_hat) / n_batch
-        regularization_posterior     = (1.-alpha)*gaussian_regularization(mu_z, var_z) / n_batch
-        regularization_ave_posterior = (alpha + scaling - 1) * -mmd(z_samples, z_prior)
+        regularization_posterior     = (1.-alpha)*gaussian_regularization(mu_qz, var_qz) / n_batch
+        regularization_ave_posterior = (alpha + scaling - 1) * -mmd(qz_samples, z_prior)
         loss = reconstruction_loss + regularization_posterior + regularization_ave_posterior
-        
+        self.__dict__.update(locals())
+
         if train:
             loss.backward()
             self.optimizer.optimize()
-        return loss, {'recon': reconstruction_loss.detach().cpu().numpy(), 
-                      'reg_post': regularization_posterior.detach().cpu().numpy(), 
-                      'reg_ave_post': regularization_ave_posterior.detach().cpu().numpy()}
-    
+        return loss
+
     
     def train(self, n_iterations, fetcher, hook):
         t0 = time()
         for j in range(n_iterations+1):
             x = fetcher()
-            loss, results = self.forward(x)
+            loss = self.forward(x)
             # logistic
-            hook(self, loss.item(), j, time()-t0, results                                                                                                               )
+            hook(self, loss.item(), j, time()-t0)
