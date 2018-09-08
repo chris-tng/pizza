@@ -19,15 +19,15 @@ class NNLayer(object):
 		dtype, device = self.dtype, self.device
 		if type == 'gaussian':  
 			# N(0, scale)
-			return (T.randn(n_out, n_in, dtype=dtype) * scale).requires_grad_().to(device), \
-					T.zeros(n_out, 1, requires_grad=True, dtype=dtype).to(device)
+			return (T.randn(n_out, n_in, dtype=dtype, device=device) * scale).requires_grad_(), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=dtype, device=device)
 		elif type == 'uniform': 
 			# Unif(-scale, scale)
-			return ((2*T.rand(n_out, n_in, dtype=dtype) - 1.) * scale).requires_grad_().to(device), \
-					T.zeros(n_out, 1, requires_grad=True, dtype=dtype).to(device)	
+			return ((2*T.rand(n_out, n_in, dtype=dtype, device=device) - 1.) * scale).requires_grad_(), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=dtype, device=device)	
 		else:
-			return (T.randn(n_out, n_in, dtype=dtype) * 1./np.sqrt(n_in)).requires_grad_().to(device), \
-					T.zeros(n_out, 1, requires_grad=True, dtype=dtype)
+			return (T.randn(n_out, n_in, dtype=dtype, device=device) * 1./np.sqrt(n_in)).requires_grad_(), \
+					T.zeros(n_out, 1, requires_grad=True, dtype=dtype, device=device)
 				
 		
 	def forward(self):
@@ -82,7 +82,7 @@ class LSTMLayer(NNLayer):
 		super().__init__(n_in, n_out, w_init, dropout, device)
 		self.non_linear = None
 		# initialize the forget bias to large value to remember more
-		self.bf = T.ones(n_out, 1, requires_grad=True, dtype=self.dtype).to(device)
+		self.bf = T.ones(n_out, 1, requires_grad=True, dtype=self.dtype, device=device)
 		self.Wf, _       = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1]) 
 		self.Wi, self.bi = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
 		self.Wg, self.bg = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
@@ -124,7 +124,7 @@ class LSTMLayer(NNLayer):
 			_h = o * T.tanh(c)
 			# batch norm - maybe?
 			h = _h * T.tensor(np.random.binomial(1, 1.-dropout, 
-												 tuple(_h.size()))/(1.-dropout), dtype=dtype).to(device) if dropout else _h
+												 tuple(_h.size()))/(1.-dropout), dtype=dtype, device=device) if dropout else _h
 			hprev  = h
 			cprev  = c
 			_hs.append(h)
@@ -152,7 +152,7 @@ class DenseLayer(NNLayer):
 		_out = self.non_linear(h)
 		# perform dropout - may switch this before non-linear for ReLU unit
 		out = _out * T.tensor(np.random.binomial(1, 1.-dropout, 
-												 tuple(_out.size()))/(1.-dropout), dtype=dtype).to(device) if dropout else _out
+												 tuple(_out.size()))/(1.-dropout), dtype=dtype, device=device) if dropout else _out
 		return out
 	   
 
@@ -174,7 +174,7 @@ class GaussianLayer(NNLayer):
 		"""
 		mu   = self.Wm.mm(X) + self.bm
 		var  = T.exp(self.Ws.mm(X) + self.bs)
-		mask = T.tensor(np.random.binomial(1, 1.-dropout, tuple(mu.size()))/(1.-dropout), dtype=dtype).to(self.device) if self.dropout else 1.
+		mask = T.tensor(np.random.binomial(1, 1.-dropout, tuple(mu.size()))/(1.-dropout), dtype=dtype, device=self.device) if self.dropout else 1.
 		# use the same dropout mask for both
 		_mu  = mu * mask 
 		_var = var * mask
