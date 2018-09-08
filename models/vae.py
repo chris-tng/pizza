@@ -86,7 +86,7 @@ class VAE(object):
 		if train:
 			loss.backward()
 			self.optimizer.optimize()
-		return loss, {'z_samples': z.detach().numpy(), 'x_hat': x_hat.detach().numpy() }
+		return loss, {'z_samples': z.detach().cpu().numpy(), 'x_hat': x_hat.detach().cpu().numpy() }
 					  #'mu_x': mu_x.detach().numpy(), 'var_x': var_x.detach().numpy()}
 	
 	
@@ -222,7 +222,7 @@ class AuxVAE(object):
             x = fetcher()
             loss, px_samples = self.forward(x)
             # logistic
-            hook(self, loss.item(), j, time() - t0, px_samples.detach().numpy())
+            hook(self, loss.item(), j, time() - t0, px_samples.detach().cpu().numpy())
 
 
 class MMDVAE(object):
@@ -266,9 +266,9 @@ class MMDVAE(object):
         if train:
             loss.backward()
             self.optimizer.optimize()
-        return loss, {'recon': reconstruction_loss.detach().numpy(), 
-                      'reg_post': regularization_posterior.detach().numpy(), 
-                      'reg_ave_post': regularization_ave_posterior.detach().numpy()}
+        return loss, {'recon': reconstruction_loss.detach().cpu().numpy(), 
+                      'reg_post': regularization_posterior.detach().cpu().numpy(), 
+                      'reg_ave_post': regularization_ave_posterior.detach().cpu().numpy()}
     
     
     def train(self, n_iterations, fetcher, hook):
