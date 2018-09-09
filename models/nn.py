@@ -98,7 +98,7 @@ class LSTMLayer(NNLayer):
 		
 		hprev, cprev are hidden states from previous time step. It could happen in the case of character-level model where 
 		the input is a stream of characters. We use a sliding window of size `n_batch` to feed that window of input into LSTM,
-		then hidden states are preserved and forwarded to the next window
+		then hidden states are preserved and forwarded to the next window.
 		
 		Empty memory occurs in case of `learning to sum bits` where each sliding window is a separate training case.
 		
@@ -109,8 +109,8 @@ class LSTMLayer(NNLayer):
 		Wi, Wf, Wo, Wg = self.Wi, self.Wf, self.Wo, self.Wg   
 		bi, bf, bo, bg = self.bi, self.bf, self.bo, self.bg   
 		
-		hprev   = T.zeros(n_out, 1, dtype=dtype).to(device) if hprev == None else hprev
-		cprev   = T.zeros(n_out, 1, dtype=dtype).to(device) if cprev == None else cprev
+		hprev   = T.zeros(n_out, 1, dtype=dtype, device=device) if hprev == None else hprev
+		cprev   = T.zeros(n_out, 1, dtype=dtype, device=device) if cprev == None else cprev
 		_hs     = []
 		n_batch = x.size()[1]
 		for j in range(n_batch):
