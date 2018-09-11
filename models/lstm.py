@@ -1,7 +1,5 @@
-import sys
-sys.path.append('../..')
-
-from pizza.models import LSTMLayer, DenseLayer
+from .nn import *
+import numpy as np
 import torch as T
 
 
@@ -13,9 +11,9 @@ class LSTMModel(object):
     def __init__(self, params):
         self.__dict__.update(params)
         device, w_init = self.device, self.w_init
-        self.lstm1  = LSTMLayer(self.n_in, self.n_hidden1, w_init=w_init, device=device)
-        self.lstm2  = LSTMLayer(self.n_hidden1, self.n_hidden2, w_init=w_init, device=device)
-        self.output = DenseLayer(self.n_hidden2, self.n_out, self.out_nonlinear, w_init=w_init, device=device)
+        self.lstm1  = LSTMLayer(self.n_hidden1, self.n_in, w_init=w_init, device=device)
+        self.lstm2  = LSTMLayer(self.n_hidden2, self.n_hidden1, w_init=w_init, device=device)
+        self.output = DenseLayer(self.n_out, self.n_hidden2, self.out_nonlinear, w_init=w_init, device=device)
         self.optimizer(self.learning_rate, self.clamping, [self.lstm1, self.lstm2, self.output])
        
     

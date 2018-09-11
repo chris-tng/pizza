@@ -1,8 +1,9 @@
 import torch as T
 import numpy as np
 
+# Common activations
 softplus = lambda x: T.log(1. + T.exp(x))
-softmax  = lambda x: T.exp(x) / T.exp(x).sum(dim=0)
+softmax  = lambda x: T.exp(x) / T.exp(x).sum(dim=0)  # x of dim (n_x, n_batch)
 
 
 class NNLayer(object):
@@ -10,18 +11,18 @@ class NNLayer(object):
 	Base class for Neural network layer
 	"""
 
-	def __init__(self, n_in, n_out, w_init, dropout=None, device=T.device('cpu')):
-		self.n_in, self.n_out, self.dropout, self.w_init, self.dtype, self.device = n_in, n_out, dropout, w_init, T.float64, device
+	def __init__(self, n_out, n_in, w_init=(None, None), device=T.device('cpu')):
+		self.n_in, self.n_out, self.w_init, self.dtype, self.device = n_in, n_out, w_init, T.float64, device
 		# subclass needs to implement weight init
 		
 	
-	def _w_init(self, n_out, n_in, type='xavier', scale=None):
-		dtype, device = self.dtype, self.device
-		if type == 'gaussian':  
+	def _w_init(self, n_out, n_in):
+		dtype, device, init_type, scale = self.dtype, self.device, self.w_init[0], self.w_init[1]
+		if init_type == 'gaussian':  
 			# N(0, scale)
 			return (T.randn(n_out, n_in, dtype=dtype, device=device) * scale).requires_grad_(), \
 					T.zeros(n_out, 1, requires_grad=True, dtype=dtype, device=device)
-		elif type == 'uniform': 
+		elif init_type == 'uniform': 
 			# Unif(-scale, scale)
 			return ((2*T.rand(n_out, n_in, dtype=dtype, device=device) - 1.) * scale).requires_grad_(), \
 					T.zeros(n_out, 1, requires_grad=True, dtype=dtype, device=device)	
@@ -68,7 +69,7 @@ class NNLayer(object):
 
 
 	def __repr__(self):
-		return "<{0} shape={1} non_linear='{2}'>".format(self.__class__.__name__, self.shape, self.non_linear.__name__)
+		return "<{0} shape={1} activation='{2}'>".format(self.__class__.__name__, self.shape, self.activation.__name__)
 
 	
 	def __str__(self):
@@ -76,17 +77,43 @@ class NNLayer(object):
 
 		
 
+
+class DropoutLayer(NNLayer):
+
+	def __init__(self, n_out, n_in, dropout, device):
+		super().__init__(n_out, n_in, device=device)
+		self.dropout = dropout
+
+
+	def forward(self, x):
+		dropout, dtype, device = self.dropout, self.dtype, self.device
+		mask = T.tensor(np.random.binomial(1, 1.-dropout, tuple(x.size()))/(1.-dropout), dtype=dtype, device=device)
+		return mask * x			
+
+
+
+
 class LSTMLayer(NNLayer):
+	"""
+	LSTM has the following structure
+
+	(n_out) [  ]
+	h ----> [  ]   
+		    [  ]
+		     ^
+		     | x  (n_in)
+	"""
 	
-	def __init__(self, n_in, n_out, w_init, dropout=None, device=T.device('cpu')):
-		super().__init__(n_in, n_out, w_init, dropout, device)
-		self.non_linear = None
+	def __init__(self, n_out, n_in, w_init=(None, None), device=T.device('cpu'), trainable_init=True):
+		super().__init__(n_out, n_in, w_init, device)
 		# initialize the forget bias to large value to remember more
 		self.bf = T.ones(n_out, 1, requires_grad=True, dtype=self.dtype, device=device)
-		self.Wf, _       = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1]) 
-		self.Wi, self.bi = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
-		self.Wg, self.bg = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
-		self.Wo, self.bo = self._w_init(n_out, n_in + n_out, type=w_init[0], scale=w_init[1])
+		self.Wf, _       = self._w_init(n_out, n_in + n_out) 
+		self.Wi, self.bi = self._w_init(n_out, n_in + n_out)
+		self.Wg, self.bg = self._w_init(n_out, n_in + n_out)
+		self.Wo, self.bo = self._w_init(n_out, n_in + n_out)
+		self.h0, self.c0 = self._w_init(n_out, 1)[1], self._w_init(n_out, 1)[1] \
+		if trainable_init else T.zeros(n_out, 1, dtype=dtype, device=device), T.zeros(n_out, 1, dtype=dtype, device=device)
 
 	
 	def forward(self, x, hprev=None, cprev=None):
@@ -103,80 +130,114 @@ class LSTMLayer(NNLayer):
 		Empty memory occurs in case of `learning to sum bits` where each sliding window is a separate training case.
 		
 		Returns:
-		- hs: list of torch.Tensor as outputs from the layer to be used in subsequent layer
+		- hs: list of torch.Tensor as outputs from the upper layer
 		"""
-		n_in, n_out, dtype, dropout, device = self.n_in, self.n_out, self.dtype, self.dropout, self.device
+		n_in, n_out    = self.n_in, self.n_out
 		Wi, Wf, Wo, Wg = self.Wi, self.Wf, self.Wo, self.Wg   
-		bi, bf, bo, bg = self.bi, self.bf, self.bo, self.bg   
+		bi, bf, bo, bg = self.bi, self.bf, self.bo, self.bg  
 		
-		hprev   = T.zeros(n_out, 1, dtype=dtype, device=device) if hprev == None else hprev
-		cprev   = T.zeros(n_out, 1, dtype=dtype, device=device) if cprev == None else cprev
-		_hs     = []
+		hprev = self.h0 if hprev is None else hprev 
+		cprev = self.c0 if cprev is None else cprev 
+		
+		_hs, self.cs, self.gate_is, self.gate_fs, self.gate_gs, self.gate_os = [], [], [], [], [], []
 		n_batch = x.size()[1]
 		for j in range(n_batch):
 			_x = x[:, j].view(-1, 1)
 			xh = T.cat((_x, hprev), dim=0)
-			i  = T.sigmoid(Wi.mm(xh) + bi)
-			f  = T.sigmoid(Wf.mm(xh) + bf)
-			g  = T.sigmoid(Wg.mm(xh) + bg)
-			o  = T.tanh(Wo.mm(xh) + bo)
-			c  = f * cprev + i * g
-			_h = o * T.tanh(c)
-			# batch norm - maybe?
-			h = _h * T.tensor(np.random.binomial(1, 1.-dropout, 
-												 tuple(_h.size()))/(1.-dropout), dtype=dtype, device=device) if dropout else _h
+			gate_i = T.sigmoid(Wi.mm(xh) + bi)
+			gate_f = T.sigmoid(Wf.mm(xh) + bf)
+			gate_g = T.sigmoid(Wg.mm(xh) + bg)
+			gate_o = T.tanh(Wo.mm(xh) + bo)
+			c = gate_f * cprev + gate_i * gate_g
+			h = gate_o * T.tanh(c)
 			hprev  = h
 			cprev  = c
-			_hs.append(h)
+			_hs.append(h); self.cs.append(c); self.gate_is.append(i)
+			self.gate_fs.append(f); self.gate_gs.append(g); self.gate_os.append(o)
 		hs = T.cat(_hs, dim=1)
 		return hs
-	
+
+
+
+
+class RNNLayer(NNLayer):
+    
+    def __init__(self, n_out, n_in, w_init=(None, None), device=T.device('cpu'), trainable_init=True):
+        super().__init__(n_out, n_in, w_init, device)
+        
+        self.Wx, _       = self._w_init(n_out, n_in)
+        self.Wh, self.bh = self._w_init(n_out, n_out)
+        self.h0 = self._w_init(n_out, 1)[1] if trainable_init else T.tensor(n_out, 1, dtype=self.dtype, device=device)
+    
+    
+    def forward(self, x, hprev=None):
+        Wx, Wh, bh = self.Wx, self.Wh, self.bh
+        n_batch = x.size()[1]
+        
+        _hs = []
+        hprev = self.h0 if hprev is None else hprev
+        for j in range(n_batch):
+            h = T.tanh(Wx.mm(x[:, j].view(-1, 1)) + Wh.mm(hprev) + bh)
+            hprev = h
+            _hs.append(hprev)
+        hs = T.cat(_hs, dim=1)
+        return hs
+
 
 
 
 class DenseLayer(NNLayer):
 	
-	def __init__(self, n_in, n_out, non_linear, w_init, dropout=None, device=T.device('cpu')):
-		super().__init__(n_in, n_out, w_init, dropout, device)
-		self.non_linear = non_linear
-		self.W, self.b = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
+	def __init__(self, n_out, n_in, activation, w_init=(None, None), device=T.device('cpu')):
+		super().__init__(n_out, n_in, w_init, device)
+		self.activation = activation
+		self.W, self.b  = self._w_init(n_out, n_in)
 		
 		
-	def forward(self, X):
+	def forward(self, x):
 		"""
 		X: torch.Tensor of dim (n_x, n_batch)
-		"""
-		dtype, dropout, device = self.dtype, self.dropout, self.device
+		"""		
+		self.h = self.W.mm(x) + self.b
+		return self.activation(h)
 		
-		h = self.W.mm(X) + self.b
-		_out = self.non_linear(h)
-		# perform dropout - may switch this before non-linear for ReLU unit
-		out = _out * T.tensor(np.random.binomial(1, 1.-dropout, 
-												 tuple(_out.size()))/(1.-dropout), dtype=dtype, device=device) if dropout else _out
-		return out
-	   
+
+
+
+class EmbeddingLayer(NNLayer):
+    """
+    Layer acts as a trainable distributed representation or an embedding of dim (n_in, n_out)
+    """
+    
+    def __init__(self, n_out, n_in, w_init=(None, None), device=T.device('cpu')):
+        super().__init__(n_out, n_in, w_init, device)
+        self.embedding, _ = self._w_init(n_out, n_in)
+        
+        
+    def forward(self, x):
+        """
+        x: list of indexes
+        """
+        return self.embedding[x]
+
 
 
 
 class GaussianLayer(NNLayer):
 	"""
-	Layer to model mean and logvar of Gaussian 
+	Layer to model mean and var of Gaussian distribution, usually used in VAE
 	"""
-	def __init__(self, n_in, n_out, w_init, dropout=None, device=T.device('cpu')):
-		super().__init__(n_in, n_out, w_init, dropout, device)
-		self.Wm, self.bm = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
-		self.Ws, self.bs = self._w_init(n_out, n_in, type=w_init[0], scale=w_init[1])
+	def __init__(self, n_out, n_in, w_init=(None, None), device=T.device('cpu')):
+		super().__init__(n_out, n_in, w_init, device)
+		self.Wm, self.bm = self._w_init(n_out, n_in)
+		self.Ws, self.bs = self._w_init(n_out, n_in)
 		
 	
-	def forward(self, X):
+	def forward(self, x):
 		"""
-		X: torch.Tensor of dim (n_x, n_batch)
+		x: torch.Tensor of dim (n_x, n_batch)
 		"""
-		mu   = self.Wm.mm(X) + self.bm
+		mu   = self.Wm.mm(x) + self.bm
 		var  = T.exp(self.Ws.mm(X) + self.bs)
-		mask = T.tensor(np.random.binomial(1, 1.-dropout, tuple(mu.size()))/(1.-dropout), dtype=dtype, device=self.device) if self.dropout else 1.
-		# use the same dropout mask for both
-		_mu  = mu * mask 
-		_var = var * mask
-		return _mu, _var
+		return mu, var
 		
